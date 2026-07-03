@@ -1,8 +1,8 @@
-import { NextResponse } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
+import { NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
@@ -54,7 +54,7 @@ export async function GET() {
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
       if (workerIds.length > 0) {
-        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).in("status", ["Resolved", "resolved", "Completed", "completed"]);
+        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).neq("status", "Resolved").neq("status", "Completed");
         relevantWorkOrders = wo || [];
       }
     } else if (role === 'EE') {
@@ -64,7 +64,7 @@ export async function GET() {
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
       if (workerIds.length > 0) {
-        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).in("status", ["Resolved", "resolved", "Completed", "completed"]);
+        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).neq("status", "Resolved").neq("status", "Completed");
         relevantWorkOrders = wo || [];
       }
     } else if (role === 'AE') {
@@ -72,20 +72,21 @@ export async function GET() {
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
       if (workerIds.length > 0) {
-        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).in("status", ["Resolved", "resolved", "Completed", "completed"]);
+        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).neq("status", "Resolved").neq("status", "Completed");
         relevantWorkOrders = wo || [];
       }
     } else {
-      const { data: wo } = await supabase.from("work_orders").select("*").eq("worker_id", workerProfile.id).in("status", ["Resolved", "resolved", "Completed", "completed"]);
+      const { data: wo } = await supabase.from("work_orders").select("*").eq("worker_id", workerProfile.id).neq("status", "Resolved").neq("status", "Completed");
       relevantWorkOrders = wo || [];
     }
 
-    const myResolvedReportIds = relevantWorkOrders.map(wo => String(wo.report_id));
-    if (myResolvedReportIds.length === 0) return NextResponse.json({ success: true, role, resolvedTasks: [] });
+    const reportIds = relevantWorkOrders.map(wo => String(wo.report_id));
+    if (reportIds.length === 0) return NextResponse.json({ success: true, role, reports: [] });
 
-    const { data: allReports } = await supabase.from('dashboard_reports').select('*').in('id', myResolvedReportIds);
+    const { data: allReports } = await supabase.from("dashboard_reports").select("*").in("id", reportIds);
+    const now = new Date().getTime();
 
-    const formattedTasks = relevantWorkOrders.map((wo) => {
+    const activeTickets = relevantWorkOrders.map(wo => {
       const report = allReports?.find(r => String(r.id) === String(wo.report_id));
       
       let assignedWorkerName = "Unknown JE";
@@ -102,32 +103,34 @@ export async function GET() {
           assignedWorkerName = workerProfile.worker_name;
       }
 
-      let isBreached = false;
-      const resolutionTimestamp = wo.resolved_at || new Date().toISOString();
-      const resolvedTime = new Date(resolutionTimestamp).getTime();
+      let riskStatus = "On Track";
+      let hoursRemaining = 99;
 
       if (wo.due_date) {
-         const deadline = new Date(wo.due_date).getTime();
-         isBreached = resolvedTime > deadline; 
+        const dueTime = new Date(wo.due_date).getTime();
+        hoursRemaining = Math.round((dueTime - now) / (1000 * 60 * 60));
+        if (hoursRemaining < 0) riskStatus = "Breached";
+        else if (hoursRemaining < 24) riskStatus = "High Risk";
       }
 
       return {
-        work_order_id: String(wo.id), 
-        category_name: (report?.issue_type || 'Pothole').replace(/_/g, ' ').toUpperCase(),
-        department_name: report?.assigned_department || 'PWD Office',
-        village_name: report?.village_name || 'Location Logged',
-        worker_name: assignedWorkerName, 
-        resolved_at: resolutionTimestamp,
-        due_date: wo.due_date || new Date().toISOString(),
-        is_sla_breached: isBreached
+        id: String(wo.report_id),
+        issue_type: report?.issue_type || "Infrastructure Issue",
+        village_name: report?.village_name || "Location Logged",
+        timestamp: report?.created_at,
+        status: wo.status || "Pending",
+        latitude: report?.latitude,
+        longitude: report?.longitude,
+        image_path: report?.image_path || null,
+        worker_name: assignedWorkerName,
+        hours_remaining: Math.abs(hoursRemaining),
+        risk_status: riskStatus
       };
     });
 
-    formattedTasks.sort((a, b) => new Date(b.resolved_at).getTime() - new Date(a.resolved_at).getTime());
-
-    return NextResponse.json({ success: true, role, resolvedTasks: formattedTasks });
+    return NextResponse.json({ success: true, role, reports: activeTickets });
 
   } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message || "Database fetch failed" }, { status: 500 });
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

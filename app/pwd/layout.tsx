@@ -24,6 +24,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/pwd/resolved" className="block px-4 py-3 rounded-lg hover:bg-slate-800 transition text-green-400">✅ Resolved</Link>
             <Link href="/pwd/workers" className="block px-4 py-3 rounded-lg hover:bg-slate-800 transition">👷 Field Workers</Link>
             <Link href="/pwd/departments" className="block px-4 py-3 rounded-lg hover:bg-slate-800 transition">🏢 Departments</Link>
+            <Link href="/pwd/vibrations" className="block px-4 py-3 rounded-lg hover:bg-slate-800 transition">🫨 Vibrations</Link>
+            
           </nav>
         </aside>
 
