@@ -54,7 +54,13 @@ export async function GET() {
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
       if (workerIds.length > 0) {
-        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).neq("status", "Resolved").neq("status", "Completed");
+        // FIX: CE only sees tickets that have escalated to Level 3 or higher
+        const { data: wo } = await supabase.from("work_orders")
+          .select("*")
+          .in("worker_id", workerIds)
+          .neq("status", "Resolved")
+          .neq("status", "Completed")
+          .gte("escalation_level", 3);
         relevantWorkOrders = wo || [];
       }
     } else if (role === 'EE') {
@@ -64,7 +70,13 @@ export async function GET() {
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
       if (workerIds.length > 0) {
-        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).neq("status", "Resolved").neq("status", "Completed");
+        // FIX: EE only sees tickets that have escalated to Level 2 or higher
+        const { data: wo } = await supabase.from("work_orders")
+          .select("*")
+          .in("worker_id", workerIds)
+          .neq("status", "Resolved")
+          .neq("status", "Completed")
+          .gte("escalation_level", 2);
         relevantWorkOrders = wo || [];
       }
     } else if (role === 'AE') {
@@ -80,14 +92,25 @@ export async function GET() {
       relevantWorkOrders = wo || [];
     }
 
-    const reportIds = relevantWorkOrders.map(wo => String(wo.report_id));
-    if (reportIds.length === 0) return NextResponse.json({ success: true, role, reports: [] });
+    // Ensure we actually have tickets to look for
+    const reportIdentifiers = relevantWorkOrders.map(wo => wo.report_uuid || wo.report_id).filter(Boolean);
+    if (reportIdentifiers.length === 0) return NextResponse.json({ success: true, role, reports: [] });
 
-    const { data: allReports } = await supabase.from("dashboard_reports").select("*").in("id", reportIds);
+    // Query 'reports' directly
+    const { data: allReports, error: reportsError } = await supabase.from("reports").select("*");
+    
+    if (reportsError) {
+      console.error("Database Error:", reportsError);
+    }
+    
     const now = new Date().getTime();
 
     const activeTickets = relevantWorkOrders.map(wo => {
-      const report = allReports?.find(r => String(r.id) === String(wo.report_id));
+      const targetId = String(wo.report_uuid || wo.report_id);
+      
+      const report = allReports?.find(r => 
+         String(r.id) === targetId || String(r.uuid) === targetId
+      );
       
       let assignedWorkerName = "Unknown JE";
       if (role === 'AE' || role === 'EE' || role === 'CE') {
@@ -114,14 +137,14 @@ export async function GET() {
       }
 
       return {
-        id: String(wo.report_id),
+        id: targetId, 
         issue_type: report?.issue_type || "Infrastructure Issue",
-        village_name: report?.village_name || "Location Logged",
+        village_name: report?.village_name || report?.assigned_department || "Location Not Logged",
         timestamp: report?.created_at,
         status: wo.status || "Pending",
         latitude: report?.latitude,
         longitude: report?.longitude,
-        image_path: report?.image_path || null,
+        image_path: report?.image_url || report?.image_path || null, 
         worker_name: assignedWorkerName,
         hours_remaining: Math.abs(hoursRemaining),
         risk_status: riskStatus

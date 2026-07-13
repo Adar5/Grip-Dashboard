@@ -12,6 +12,33 @@ export default function ResolveTicketButton({ reportId, onSuccess }: ResolveButt
     const [isResolving, setIsResolving] = useState(false);
     const [photoFile, setPhotoFile] = useState<File | null>(null);
 
+    const getGpsErrorMessage = (error: GeolocationPositionError) => {
+        switch (error.code) {
+            case error.PERMISSION_DENIED:
+                return "❌ Location permission was denied. Please allow location access for this site in your browser settings and try again.";
+            case error.POSITION_UNAVAILABLE:
+                return "❌ Your device could not provide a location right now. Please make sure GPS is enabled and you are in an open area, then try again.";
+            case error.TIMEOUT:
+                return "❌ Location request timed out. Please try again or move to a place with a stronger signal.";
+            default:
+                return "❌ Unable to get your location right now. Please check your browser permissions and try again.";
+        }
+    };
+
+    const getCurrentPositionWithFallback = async (enableHighAccuracy: boolean): Promise<GeolocationPosition> => {
+        return new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(
+                resolve,
+                reject,
+                {
+                    enableHighAccuracy,
+                    timeout: enableHighAccuracy ? 15000 : 10000,
+                    maximumAge: 0,
+                },
+            );
+        });
+    };
+
     const handleResolve = async () => {
         if (!photoFile) {
             alert("❌ Please upload a photo of the resolved issue first.");
@@ -26,58 +53,83 @@ export default function ResolveTicketButton({ reportId, onSuccess }: ResolveButt
             return;
         }
 
-        navigator.geolocation.getCurrentPosition(
-            async (position) => {
-                const workerLat = position.coords.latitude;
-                const workerLng = position.coords.longitude;
+        if (typeof window !== "undefined" && !window.isSecureContext) {
+            alert("❌ Location access requires a secure connection. Please open this page over HTTPS or localhost.");
+            setIsResolving(false);
+            return;
+        }
 
-                try {
-                    const fileExt = photoFile.name.split('.').pop();
-                    const fileName = `resolutions/resolved_${reportId}_${Date.now()}.${fileExt}`;
-
-                    const { error: uploadError } = await supabase.storage
-                        .from('reports') 
-                        .upload(fileName, photoFile, { contentType: photoFile.type });
-
-                    if (uploadError) throw new Error(`Photo upload failed: ${uploadError.message}`);
-
-                    const { data: { publicUrl } } = supabase.storage
-                        .from('reports')
-                        .getPublicUrl(fileName);
-
-                    // THE FIX: We use parseInt() to strip away the String and send a pure Integer to Postgres!
-                    const { data, error: rpcError } = await supabase.rpc('resolve_report_with_geofence', {
-                        p_report_id: parseInt(reportId), 
-                        p_worker_lat: workerLat,
-                        p_worker_lng: workerLng,
-                        p_photo_url: publicUrl,
-                        p_max_distance_meters: 30 
-                    });
-
-                    if (rpcError) throw new Error(`Database error: ${rpcError.message}`);
-
-                    if (data.success) {
-                        alert(`✅ Ticket Resolved! Location verified (Distance: ${data.distance_meters} meters).`);
-                        if (onSuccess) onSuccess(); 
-                    } else {
-                        alert(`🛑 ${data.error}`);
-                    }
-
-                } catch (error: unknown) {
-                    console.error("Resolution workflow failed:", error);
-                    const message = error instanceof Error ? error.message : 'Unknown error';
-                    alert(`❌ Error: ${message}`);
-                } finally {
+        try {
+            if ("permissions" in navigator && navigator.permissions?.query) {
+                const permissionStatus = await navigator.permissions.query({ name: "geolocation" });
+                if (permissionStatus.state === "denied") {
+                    alert("❌ Location permission is blocked for this site. Please enable location access in your browser settings and try again.");
                     setIsResolving(false);
+                    return;
                 }
-            },
-            (geoError) => {
-                console.error("GPS Error:", geoError);
-                alert("❌ Failed to get your exact location. Please ensure location services are turned on and try again.");
+            }
+
+            let position: GeolocationPosition;
+            try {
+                position = await getCurrentPositionWithFallback(true);
+            } catch (error) {
+                if (error instanceof GeolocationPositionError && error.code === GeolocationPositionError.TIMEOUT) {
+                    position = await getCurrentPositionWithFallback(false);
+                } else {
+                    throw error;
+                }
+            }
+
+            const workerLat = position.coords.latitude;
+            const workerLng = position.coords.longitude;
+
+            try {
+                const fileExt = photoFile.name.split('.').pop();
+                const fileName = `resolutions/resolved_${reportId}_${Date.now()}.${fileExt}`;
+
+                const { error: uploadError } = await supabase.storage
+                    .from('reports') 
+                    .upload(fileName, photoFile, { contentType: photoFile.type });
+
+                if (uploadError) throw new Error(`Photo upload failed: ${uploadError.message}`);
+
+                const { data: { publicUrl } } = supabase.storage
+                    .from('reports')
+                    .getPublicUrl(fileName);
+
+                // THE FIX: We use parseInt() to strip away the String and send a pure Integer to Postgres!
+                const { data, error: rpcError } = await supabase.rpc('resolve_report_with_geofence', {
+                    p_report_id: parseInt(reportId), 
+                    p_worker_lat: workerLat,
+                    p_worker_lng: workerLng,
+                    p_photo_url: publicUrl,
+                    p_max_distance_meters: 30 
+                });
+
+                if (rpcError) throw new Error(`Database error: ${rpcError.message}`);
+
+                if (data.success) {
+                    alert(`✅ Ticket Resolved! Location verified (Distance: ${data.distance_meters} meters).`);
+                    if (onSuccess) onSuccess(); 
+                } else {
+                    alert(`🛑 ${data.error}`);
+                }
+
+            } catch (error: unknown) {
+                console.error("Resolution workflow failed:", error);
+                const message = error instanceof Error ? error.message : 'Unknown error';
+                alert(`❌ Error: ${message}`);
+            } finally {
                 setIsResolving(false);
-            },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 } 
-        );
+            }
+        } catch (error: unknown) {
+            console.error("GPS Error:", error);
+            const message = error instanceof GeolocationPositionError
+                ? getGpsErrorMessage(error)
+                : "❌ Unable to get your location right now. Please check your browser permissions and try again.";
+            alert(message);
+            setIsResolving(false);
+        }
     };
 
     return (

@@ -55,15 +55,24 @@ export async function GET(request: Request) {
 
     const validVillageNames = talukaVillages?.map(v => v.department_name) || [];
 
-    // 5. FIX: Fetch ALL reports (NO SQL JOINS so it doesn't crash)
+    // 5. FIX: Fetch ALL ACTIVE reports (Don't waste bandwidth downloading resolved tickets)
     const { data: allReports, error: reportsError } = await supabase
       .from('reports')
-      .select('*');
+      .select('*')
+      .neq('status', 'completed')
+      .neq('status', 'resolved');
 
     if (reportsError) throw reportsError;
 
-    // 6. Format the data for the frontend Map and Dashboard
-    const formattedTickets = (allReports || []).map((report) => {
+    // 🌟 THE NEW GARBAGE FILTER 🌟
+    // Strip out all potholes, water leaks, and infrastructure issues
+    const garbageReports = (allReports || []).filter((r) => {
+      const type = (r.issue_type || '').toLowerCase();
+      return ['garb', 'dump', 'waste', 'trash', 'litter', 'c_and_d'].some(keyword => type.includes(keyword));
+    });
+
+    // 6. Format the data for the frontend Map and Dashboard using ONLY the garbage reports
+    const formattedTickets = garbageReports.map((report) => {
       const reportVillage = report.village_name || 'Unknown Village';
       
       // THE NEW MAGIC TRICK: 
@@ -79,9 +88,12 @@ export async function GET(request: Request) {
       };
     });
 
-    const pendingCount = formattedTickets.filter(t => t.is_my_territory && t.status === 'pending').length;
+    // 7. Calculate pending count (Including tickets escalated specifically to them)
+    const pendingCount = formattedTickets.filter(t => 
+      t.is_my_territory && (t.status === 'pending' || t.status === 'Escalated_BDO')
+    ).length;
 
-    // 7. Send the complete payload back to the dashboard
+    // 8. Send the complete payload back to the dashboard
     return NextResponse.json({
       success: true,
       currentUser: { jurisdiction: bdoTaluka },

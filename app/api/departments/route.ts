@@ -19,7 +19,6 @@ export async function GET() {
     const safeUserEmail = user.email.trim().toLowerCase();
     const { data: allDepts } = await supabase.from("departments").select("*");
 
-    // 1. THE BULLETPROOF IDENTITY CHECK (AE, JE, EE, or CE?)
     const aeDept = allDepts?.find(d => d.contact_email && d.contact_email.trim().toLowerCase() === safeUserEmail);
 
     let workerProfile = null;
@@ -35,9 +34,9 @@ export async function GET() {
       
       if (workerProfile) {
         if (workerProfile.hierarchy_level === 5) {
-          role = 'CE'; // Chief Engineer detected!
+          role = 'CE'; 
         } else if (workerProfile.hierarchy_level === 4) {
-          role = 'EE'; // Executive Engineer detected!
+          role = 'EE'; 
           eeDistrict = workerProfile.specialty.includes("North") ? "North Goa" : "South Goa";
         } else {
           role = 'JE';
@@ -52,16 +51,13 @@ export async function GET() {
     const userLevel = role === 'AE' ? 1 : workerProfile.hierarchy_level;
     const userTaluka = role === 'CE' ? "State of Goa" : role === 'EE' ? `${eeDistrict} District` : (myDept?.taluka_name || "Unknown");
 
-    // 2. FETCH WORK ORDERS BASED ON ROLE
     let relevantWorkOrders: any[] = [];
     let departmentWorkers: any[] = [];
 
     if (role === 'CE') {
-      // CE View: Get EVERYTHING
       const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id");
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
-
       if (workerIds.length > 0) {
         const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds);
         relevantWorkOrders = wo || [];
@@ -72,7 +68,6 @@ export async function GET() {
       const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id").in("department_id", deptIds);
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
-
       if (workerIds.length > 0) {
         const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds);
         relevantWorkOrders = wo || [];
@@ -81,7 +76,6 @@ export async function GET() {
       const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id").eq("department_id", myDept?.id);
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
-
       if (workerIds.length > 0) {
         const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds);
         relevantWorkOrders = wo || [];
@@ -91,11 +85,16 @@ export async function GET() {
       relevantWorkOrders = wo || [];
     }
 
-    // 3. FETCH MAP DATA AND PROCESS
     const { data: allReports } = await supabase.from("dashboard_reports").select("*");
 
     const processedTickets = allReports?.map((report) => {
-        const matchingWorkOrder = relevantWorkOrders.find((wo) => String(wo.report_id) === String(report.id));
+        // FIX 1: Use report_uuid instead of report_id to trigger the red dots correctly
+        const matchingWorkOrder = relevantWorkOrders.find((wo) => {
+            const woId = wo.report_uuid || wo.report_id;
+            const reportId = report.uuid || report.id;
+            return String(woId) === String(reportId);
+        });
+        
         const isMine = !!matchingWorkOrder;
 
         let assignedWorkerName = "Other Division";
@@ -104,7 +103,6 @@ export async function GET() {
                 const assignedWorker = departmentWorkers.find(w => String(w.id) === String(matchingWorkOrder.worker_id));
                 if (assignedWorker) {
                     assignedWorkerName = assignedWorker.worker_name;
-                    // For EE & CE, add the division name so they know where the JE is located
                     if (role === 'EE' || role === 'CE') {
                         const wDept = allDepts?.find(d => d.id === assignedWorker.department_id);
                         if (wDept) assignedWorkerName += ` (${wDept.taluka_name})`;
@@ -120,6 +118,17 @@ export async function GET() {
         let type = report.issue_type || "Pothole / Issue";
         if (type.toLowerCase().includes("massive") || type.toLowerCase().includes("high severity")) type = "Major Pothole";
 
+        const locationLabel = [
+          report.village_name,
+          report.assigned_department,
+          report.department_name,
+          report.taluka_name,
+          report.district_name,
+        ].find((value) => value && String(value).trim()) || 
+          (report.latitude && report.longitude
+            ? `Lat ${Number(report.latitude).toFixed(4)}, Lng ${Number(report.longitude).toFixed(4)}`
+            : "Coordinates logged");
+
         return {
           id: report.id,
           latitude: report.latitude, 
@@ -129,6 +138,8 @@ export async function GET() {
           is_my_territory: isMine,
           worker_name: assignedWorkerName,
           ai_predictions: report.ai_predictions,
+          village_name: locationLabel,
+          location_label: locationLabel,
         };
       }) || [];
 

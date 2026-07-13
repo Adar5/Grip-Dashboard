@@ -10,6 +10,7 @@ interface WasteReport {
   status: string;
   issue_type: string;
   village_name?: string;
+  assigned_department?: string;
   ai_predictions?: unknown;
   latitude: number;
   longitude: number;
@@ -23,6 +24,8 @@ interface MapMarker {
   title: string;
   status: string;
   is_my_territory: boolean;
+  village_name?: string;
+  description?: string;
 }
 
 export default function PanchayatDashboard() {
@@ -47,10 +50,11 @@ export default function PanchayatDashboard() {
                 id: t.id,
                 lat: t.latitude,
                 lng: t.longitude,
-                // SAFETY FIX: Prevent map crashes on null types
                 title: t.issue_type || 'Unclassified',
                 status: t.status || 'pending',
-                is_my_territory: t.is_my_territory 
+                is_my_territory: t.is_my_territory,
+                village_name: t.village_name || t.assigned_department || 'Location Data Attached',
+                description: t.village_name || t.assigned_department || 'Location Data Attached'
             }));
           setMarkers(newMarkers);
         } else {

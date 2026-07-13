@@ -10,30 +10,24 @@ export async function GET(request: Request) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
+        getAll() { return cookieStore.getAll(); },
         setAll(cookiesToSet) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)
             );
-          } catch {
-            // Safe to ignore in API routes
-          }
+          } catch {}
         },
       },
     }
   );
 
   try {
-    // 2. Verify the user is logged in
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 3. Find exactly which Village Panchayat this Secretary oversees
     const { data: worker } = await supabase
       .from('field_workers')
       .select('departments!inner(department_name)')
@@ -41,26 +35,29 @@ export async function GET(request: Request) {
       .single();
 
     const myVillageName = worker?.departments?.department_name;
-
     if (!myVillageName) {
       return NextResponse.json({ success: false, error: 'No Village assigned' }, { status: 400 });
     }
 
-    // 4. Fetch ALL reports (No SQL Joins needed anymore!)
+    // 1. Fetch only active (non-completed) reports
     const { data: allReports, error: reportsError } = await supabase
       .from('reports')
-      .select('*'); 
+      .select('*')
+      .neq('status', 'completed')
+      .neq('status', 'resolved')
+      .neq('status', 'pending');
 
     if (reportsError) throw reportsError;
 
-    // 5. Format the data for the frontend Map and Dashboard
-    const formattedTickets = (allReports || []).map((report) => {
-      // Grab the village name directly from the report row
+    // 2. FILTER: Keep only garbage/waste reports (Exclude potholes/roads)
+    const garbageReports = (allReports || []).filter((r) => {
+      const type = (r.issue_type || '').toLowerCase();
+      return ['garbage', 'dumping', 'waste', 'trash', 'litter', 'c_and_d', 'garbage overflow'].some(keyword => type.includes(keyword));
+    });
+
+    // 3. Format the filtered data
+    const formattedTickets = garbageReports.map((report) => {
       const reportVillage = report.village_name || 'Unknown Village';
-      
-      // THE NEW MAGIC TRICK: 
-      // Check if the report's village matches the Secretary's department name
-      // (Using .includes() makes it bulletproof just in case one says "Socorro" and the other says "Socorro Panchayat")
       const isMine = myVillageName.includes(reportVillage) || reportVillage.includes(myVillageName);
 
       return {
@@ -70,10 +67,11 @@ export async function GET(request: Request) {
       };
     });
 
-    // 6. Calculate exactly how many are pending for this specific secretary
-    const pendingCount = formattedTickets.filter(t => t.is_my_territory && t.status === 'pending').length;
+    // 4. Calculate pending count (Including escalated items)
+    const pendingCount = formattedTickets.filter(t => 
+      t.is_my_territory && (t.status === 'pending' || t.status === 'escalated')
+    ).length;
 
-    // 7. Send the complete payload back to the dashboard
     return NextResponse.json({
       success: true,
       currentUser: { jurisdiction: myVillageName },

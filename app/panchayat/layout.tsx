@@ -73,12 +73,6 @@ export default function PanchayatLayout({
             🧾 Audit & Receipts
           </Link>
           
-          <Link
-            href={`${basePath}/machinery`}
-            className="block px-4 py-3 rounded-lg hover:bg-slate-800 transition"
-          >
-            🚜 Heavy Machinery
-          </Link>
           
           <Link
             href={`${basePath}/mrf`}

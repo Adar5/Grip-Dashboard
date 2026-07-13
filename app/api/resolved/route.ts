@@ -54,7 +54,12 @@ export async function GET() {
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
       if (workerIds.length > 0) {
-        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).in("status", ["Resolved", "resolved", "Completed", "completed"]);
+        // FIX 1: CE only sees tickets that they personally resolved (Level 3 or higher)
+        const { data: wo } = await supabase.from("work_orders")
+          .select("*")
+          .in("worker_id", workerIds)
+          .in("status", ["Resolved", "resolved", "Completed", "completed"])
+          .gte("escalation_level", 3);
         relevantWorkOrders = wo || [];
       }
     } else if (role === 'EE') {
@@ -64,7 +69,12 @@ export async function GET() {
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
       if (workerIds.length > 0) {
-        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).in("status", ["Resolved", "resolved", "Completed", "completed"]);
+        // FIX 2: EE only sees tickets that they personally resolved (Level 2 or higher)
+        const { data: wo } = await supabase.from("work_orders")
+          .select("*")
+          .in("worker_id", workerIds)
+          .in("status", ["Resolved", "resolved", "Completed", "completed"])
+          .gte("escalation_level", 2);
         relevantWorkOrders = wo || [];
       }
     } else if (role === 'AE') {
@@ -80,13 +90,23 @@ export async function GET() {
       relevantWorkOrders = wo || [];
     }
 
-    const myResolvedReportIds = relevantWorkOrders.map(wo => String(wo.report_id));
-    if (myResolvedReportIds.length === 0) return NextResponse.json({ success: true, role, resolvedTasks: [] });
+    // FIX 3: Robust UUID matching to ensure tickets don't go missing
+    const reportIdentifiers = relevantWorkOrders.map(wo => wo.report_uuid || wo.report_id).filter(Boolean);
+    if (reportIdentifiers.length === 0) return NextResponse.json({ success: true, role, resolvedTasks: [] });
 
-    const { data: allReports } = await supabase.from('dashboard_reports').select('*').in('id', myResolvedReportIds);
+    // FIX 4: Pulling directly from 'reports' instead of the broken 'dashboard_reports' view
+    const { data: allReports, error: reportsError } = await supabase.from('reports').select('*');
+    
+    if (reportsError) {
+      console.error("Database Error:", reportsError);
+    }
 
     const formattedTasks = relevantWorkOrders.map((wo) => {
-      const report = allReports?.find(r => String(r.id) === String(wo.report_id));
+      const targetId = String(wo.report_uuid || wo.report_id);
+      
+      const report = allReports?.find(r => 
+         String(r.id) === targetId || String(r.uuid) === targetId
+      );
       
       let assignedWorkerName = "Unknown JE";
       if (role === 'AE' || role === 'EE' || role === 'CE') {
@@ -113,9 +133,10 @@ export async function GET() {
 
       return {
         work_order_id: String(wo.id), 
-        category_name: (report?.issue_type || 'Pothole').replace(/_/g, ' ').toUpperCase(),
+        category_name: (report?.issue_type || 'Infrastructure Issue').replace(/_/g, ' ').toUpperCase(),
         department_name: report?.assigned_department || 'PWD Office',
-        village_name: report?.village_name || 'Location Logged',
+        // FIX 5: Fallbacks to guarantee a location renders on the frontend
+        village_name: report?.village_name || report?.assigned_department || 'Location Not Logged',
         worker_name: assignedWorkerName, 
         resolved_at: resolutionTimestamp,
         due_date: wo.due_date || new Date().toISOString(),

@@ -108,12 +108,12 @@ export default function Map({ markers = [] }: { markers: MapMarker[] }) {
                   
                   <div className="text-sm text-slate-600 space-y-1 mt-2 pt-2 border-t border-slate-100">
                     <p>
-                      <strong>Area:</strong> {marker.description || marker.village_name || "Fallback Location"}
+                      <strong>Area:</strong> {marker.description || marker.village_name || marker.title || marker.issue_type || "Location not available"}
                     </p>
 
                     {/* Quick indicator inside the popup so the user knows if it's their job to fix it */}
                     <p>
-                      <strong>Jurisdiction:</strong> {marker.is_my_territory ? <span className="text-red-600 font-bold">My Panchayat</span> : "Other Panchayat"}
+                      <strong>Jurisdiction:</strong> {marker.is_my_territory ? <span className="text-red-600 font-bold">My Area</span> : "Other Locality"}
                     </p>
 
                     {marker.ai_predictions && getConfidenceScore(marker.ai_predictions) !== "N/A" && (

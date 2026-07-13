@@ -70,11 +70,12 @@ export default function Dashboard() {
           lat: lat,
           lng: lng,
           status: ticket.status || "pending",
-          issue_type: ticket.display_type || "Pothole", // Restored!
-          is_my_territory: ticket.is_my_territory,      // The magic flag for Red/Blue
-          color: ticket.is_my_territory ? "#ef4444" : "#3b82f6", 
+          issue_type: ticket.display_type || "Pothole",
+          is_my_territory: ticket.is_my_territory,
+          color: ticket.is_my_territory ? "#ef4444" : "#3b82f6",
           title: ticket.display_type || "Pothole",
-          description: ticket.assigned_department || "Location Unknown",
+          description: ticket.location_label || ticket.village_name || ticket.assigned_department || "Coordinates logged",
+          village_name: ticket.location_label || ticket.village_name || ticket.assigned_department || "Coordinates logged",
           ai_predictions: ticket.ai_predictions
         });
       }
