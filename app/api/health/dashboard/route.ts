@@ -34,40 +34,61 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 3. Find exactly which Taluka this Health Officer oversees
-    const { data: worker } = await supabase
+    // 3. Find exactly which Taluka this BDO oversees
+    const { data: worker, error: workerError } = await supabase
       .from('field_workers')
       .select('departments!inner(taluka_name)')
       .eq('auth_user_id', user.id)
-      .single();
+      .maybeSingle();
 
-    const healthTaluka = worker?.departments?.taluka_name;
-
-    if (!healthTaluka) {
-      return NextResponse.json({ success: false, error: 'No Taluka assigned' }, { status: 400 });
+    if (workerError) {
+      console.warn('BDO worker lookup warning:', workerError.message);
     }
 
-    // 4. FIX: Get a list of ALL villages that belong to this Health Officer's Taluka
+    const workerDept = Array.isArray((worker as any)?.departments)
+      ? (worker as any).departments[0]
+      : (worker as any)?.departments;
+    const bdoTaluka = workerDept?.taluka_name;
+
+    if (!bdoTaluka) {
+      return NextResponse.json({
+        success: true,
+        currentUser: { jurisdiction: 'Assigned Taluka' },
+        tickets: [],
+        pending_reports: 0
+      });
+    }
+
+    // 4. FIX: Get a list of ALL villages that belong to this BDO's Taluka
     const { data: talukaVillages } = await supabase
       .from('departments')
       .select('department_name')
-      .eq('taluka_name', healthTaluka);
+      .eq('taluka_name', bdoTaluka);
 
     const validVillageNames = talukaVillages?.map(v => v.department_name) || [];
 
-    // 5. FIX: Fetch ALL reports (NO SQL JOINS so it doesn't crash)
+    // 5. FIX: Fetch ALL ACTIVE reports (Don't waste bandwidth downloading resolved tickets)
     const { data: allReports, error: reportsError } = await supabase
       .from('reports')
-      .select('*');
+      .select('*')
+      .neq('status', 'completed')
+      .neq('status', 'resolved');
 
     if (reportsError) throw reportsError;
 
-    // 6. Format the data for the frontend Map and Dashboard
-    const formattedTickets = (allReports || []).map((report) => {
+    // 🌟 THE NEW GARBAGE FILTER 🌟
+    // Strip out all potholes, water leaks, and infrastructure issues
+    const garbageReports = (allReports || []).filter((r) => {
+      const type = (r.issue_type || '').toLowerCase();
+      return ['garb', 'dump', 'waste', 'trash', 'litter', 'c_and_d'].some(keyword => type.includes(keyword));
+    });
+
+    // 6. Format the data for the frontend Map and Dashboard using ONLY the garbage reports
+    const formattedTickets = garbageReports.map((report) => {
       const reportVillage = report.village_name || 'Unknown Village';
       
       // THE NEW MAGIC TRICK: 
-      // Check if the report's village matches ANY of the villages in this Health Officer's Taluka
+      // Check if the report's village matches ANY of the villages in this BDO's Taluka
       const isMine = validVillageNames.some(village => 
         village.includes(reportVillage) || reportVillage.includes(village)
       );
@@ -79,18 +100,21 @@ export async function GET(request: Request) {
       };
     });
 
-    const pendingCount = formattedTickets.filter(t => t.is_my_territory && t.status === 'pending').length;
+    // 7. Calculate pending count (Including tickets escalated specifically to them)
+    const pendingCount = formattedTickets.filter(t => 
+      t.is_my_territory && (t.status === 'pending' || t.status === 'Escalated_BDO')
+    ).length;
 
-    // 7. Send the complete payload back to the dashboard
+    // 8. Send the complete payload back to the dashboard
     return NextResponse.json({
       success: true,
-      currentUser: { jurisdiction: healthTaluka },
+      currentUser: { jurisdiction: bdoTaluka },
       tickets: formattedTickets,
       pending_reports: pendingCount
     });
 
   } catch (error: any) {
-    console.error("Health Officer API Error:", error);
+    console.error("BDO API Error:", error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

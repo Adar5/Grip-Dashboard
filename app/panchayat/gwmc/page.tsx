@@ -43,12 +43,27 @@ export default function GWMCDashboard() {
       .then(json => {
         if (json.success) {
           setJurisdiction(`${json.currentUser.jurisdiction} SWMF Plant`);
-          setReports(json.tickets || []);
           
-          const myPending = (json.tickets || []).filter((t: GWMCReport) => t.is_my_territory && (t.status || 'pending').toLowerCase() !== 'resolved').length;
+          // --- THE FIX: FILTER OUT POTHOLES IMMEDIATELY ---
+          const wasteTickets = (json.tickets || []).filter((t: GWMCReport) => {
+            const issue = (t.issue_type || "").toLowerCase();
+            return (
+              issue.includes("garb") ||
+              issue.includes("dump") ||
+              issue.includes("trash") ||
+              issue.includes("waste") ||
+              issue.includes("debris") ||
+              issue.includes("c_and_d")
+            );
+          });
+          
+          // Use wasteTickets for the rest of the logic instead of json.tickets
+          setReports(wasteTickets);
+          
+          const myPending = wasteTickets.filter((t: GWMCReport) => t.is_my_territory && (t.status || 'pending').toLowerCase() !== 'resolved').length;
           setDistrictPendingCount(myPending);
           
-          const newMarkers = (json.tickets || [])
+          const newMarkers = wasteTickets
             .filter((t: GWMCReport) => t.latitude && t.longitude)
             .map((t: GWMCReport) => ({
                 id: t.id,

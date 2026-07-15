@@ -14,14 +14,14 @@ export async function GET() {
     );
 
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (authError || !user || !user.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const safeUserEmail = user.email.trim().toLowerCase();
     const { data: allDepts } = await supabase.from("departments").select("*");
 
     const aeDept = allDepts?.find(d => d.contact_email && d.contact_email.trim().toLowerCase() === safeUserEmail);
 
-    let workerProfile = null;
+    let workerProfile: any = null;
     let myDept = aeDept;
     let role = 'JE';
     let eeDistrict = null;
@@ -33,11 +33,16 @@ export async function GET() {
       workerProfile = worker;
       
       if (workerProfile) {
-        if (workerProfile.hierarchy_level === 5) {
+        const spec = (workerProfile.specialty || "").toLowerCase();
+        
+        if (workerProfile.hierarchy_level === 5 || spec.includes("chief")) {
           role = 'CE'; 
-        } else if (workerProfile.hierarchy_level === 4) {
+        } else if (workerProfile.hierarchy_level === 4 || spec.includes("executive")) {
           role = 'EE'; 
-          eeDistrict = workerProfile.specialty.includes("North") ? "North Goa" : "South Goa";
+          eeDistrict = workerProfile.specialty.includes("North") ? "North" : "South";
+        } else if (workerProfile.hierarchy_level === 3 || spec.includes("assistant")) {
+          role = 'AE';
+          myDept = allDepts?.find(d => String(d.id) === String(workerProfile.department_id));
         } else {
           role = 'JE';
           myDept = allDepts?.find(d => String(d.id) === String(workerProfile.department_id));
@@ -47,13 +52,14 @@ export async function GET() {
 
     if (!aeDept && !workerProfile) return NextResponse.json({ success: false, error: "ACCESS DENIED: Profile not found." }, { status: 403 });
 
-    const userName = role === 'AE' ? aeDept.officer_in_charge : workerProfile.worker_name;
-    const userLevel = role === 'AE' ? 1 : workerProfile.hierarchy_level;
+    const userName = role === 'AE' ? (aeDept?.officer_in_charge || workerProfile?.worker_name) : workerProfile.worker_name;
+    const userLevel = role === 'AE' ? (workerProfile?.hierarchy_level || 1) : workerProfile.hierarchy_level;
     const userTaluka = role === 'CE' ? "State of Goa" : role === 'EE' ? `${eeDistrict} District` : (myDept?.taluka_name || "Unknown");
 
     let relevantWorkOrders: any[] = [];
     let departmentWorkers: any[] = [];
 
+    // --- FIX 1: REMOVED ESCALATION FILTERS SO MANAGERS SEE ALL TICKETS IN TERRITORY ---
     if (role === 'CE') {
       const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id");
       departmentWorkers = workers || [];
@@ -63,14 +69,17 @@ export async function GET() {
         relevantWorkOrders = wo || [];
       }
     } else if (role === 'EE') {
-      const districtDepts = allDepts?.filter(d => d.district === eeDistrict) || [];
+      const districtDepts = allDepts?.filter(d => d.district && d.district.includes(eeDistrict!)) || [];
       const deptIds = districtDepts.map(d => d.id);
-      const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id").in("department_id", deptIds);
-      departmentWorkers = workers || [];
-      const workerIds = departmentWorkers.map(w => w.id);
-      if (workerIds.length > 0) {
-        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds);
-        relevantWorkOrders = wo || [];
+      
+      if (deptIds.length > 0) {
+        const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id").in("department_id", deptIds);
+        departmentWorkers = workers || [];
+        const workerIds = departmentWorkers.map(w => w.id);
+        if (workerIds.length > 0) {
+          const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds);
+          relevantWorkOrders = wo || [];
+        }
       }
     } else if (role === 'AE') {
       const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id").eq("department_id", myDept?.id);
@@ -88,27 +97,45 @@ export async function GET() {
     const { data: allReports } = await supabase.from("dashboard_reports").select("*");
 
     const processedTickets = allReports?.map((report) => {
-        // FIX 1: Use report_uuid instead of report_id to trigger the red dots correctly
         const matchingWorkOrder = relevantWorkOrders.find((wo) => {
             const woId = wo.report_uuid || wo.report_id;
             const reportId = report.uuid || report.id;
             return String(woId) === String(reportId);
         });
         
-        const isMine = !!matchingWorkOrder;
+        let isMine = !!matchingWorkOrder;
+
+        // --- FIX 2: GEOGRAPHIC FALLBACK ---
+        // If the ticket has no work order, check if it geographically belongs to the manager
+        if (!isMine) {
+            if (role === 'CE') {
+                isMine = true; 
+            } else if (role === 'EE' && eeDistrict) {
+                const rDistrict = String(report.district_name || report.department_name || report.assigned_department || "").toLowerCase();
+                if (rDistrict.includes(eeDistrict.toLowerCase())) isMine = true;
+            } else if (role === 'AE' && myDept) {
+                const rDept = String(report.department_name || report.assigned_department || "").toLowerCase();
+                const myDeptName = String(myDept.department_name || "").toLowerCase();
+                if (myDeptName && rDept.includes(myDeptName)) isMine = true;
+            }
+        }
 
         let assignedWorkerName = "Other Division";
         if (isMine) {
             if (role === 'AE' || role === 'EE' || role === 'CE') {
-                const assignedWorker = departmentWorkers.find(w => String(w.id) === String(matchingWorkOrder.worker_id));
-                if (assignedWorker) {
-                    assignedWorkerName = assignedWorker.worker_name;
-                    if (role === 'EE' || role === 'CE') {
-                        const wDept = allDepts?.find(d => d.id === assignedWorker.department_id);
-                        if (wDept) assignedWorkerName += ` (${wDept.taluka_name})`;
+                if (matchingWorkOrder) {
+                    const assignedWorker = departmentWorkers.find(w => String(w.id) === String(matchingWorkOrder.worker_id));
+                    if (assignedWorker) {
+                        assignedWorkerName = assignedWorker.worker_name;
+                        if (role === 'EE' || role === 'CE') {
+                            const wDept = allDepts?.find(d => d.id === assignedWorker.department_id);
+                            if (wDept) assignedWorkerName += ` (${wDept.taluka_name})`;
+                        }
+                    } else {
+                        assignedWorkerName = "Unassigned JE";
                     }
                 } else {
-                    assignedWorkerName = "Unassigned JE";
+                    assignedWorkerName = "Awaiting Assignment";
                 }
             } else {
                 assignedWorkerName = workerProfile.worker_name;

@@ -34,18 +34,22 @@ export async function GET(request: Request) {
       .eq('auth_user_id', user.id)
       .single();
 
-    const myVillageName = worker?.departments?.department_name;
+    const workerDept = Array.isArray((worker as any)?.departments)
+      ? (worker as any).departments[0]
+      : (worker as any)?.departments;
+    const myVillageName = workerDept?.department_name;
+    
     if (!myVillageName) {
       return NextResponse.json({ success: false, error: 'No Village assigned' }, { status: 400 });
     }
 
-    // 1. Fetch only active (non-completed) reports
+    // FIX 1: Removed .neq('status', 'pending') so new tickets actually get fetched!
+    // We only want to filter out the ones that are totally finished.
     const { data: allReports, error: reportsError } = await supabase
       .from('reports')
       .select('*')
       .neq('status', 'completed')
-      .neq('status', 'resolved')
-      .neq('status', 'pending');
+      .neq('status', 'resolved');
 
     if (reportsError) throw reportsError;
 
@@ -58,7 +62,11 @@ export async function GET(request: Request) {
     // 3. Format the filtered data
     const formattedTickets = garbageReports.map((report) => {
       const reportVillage = report.village_name || 'Unknown Village';
-      const isMine = myVillageName.includes(reportVillage) || reportVillage.includes(myVillageName);
+      
+      // FIX 2: Made the territory check case-insensitive so "Mapusa" matches "mapusa"
+      const safeMyVillage = myVillageName.toLowerCase();
+      const safeReportVillage = reportVillage.toLowerCase();
+      const isMine = safeMyVillage.includes(safeReportVillage) || safeReportVillage.includes(safeMyVillage);
 
       return {
         ...report,
@@ -69,7 +77,7 @@ export async function GET(request: Request) {
 
     // 4. Calculate pending count (Including escalated items)
     const pendingCount = formattedTickets.filter(t => 
-      t.is_my_territory && (t.status === 'pending' || t.status === 'escalated')
+      t.is_my_territory && (t.status === 'Pending' || t.status === 'pending' || t.status === 'Dispatched' || t.status === 'Escalated' || t.status === 'Assigned')
     ).length;
 
     return NextResponse.json({

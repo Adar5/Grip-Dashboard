@@ -99,7 +99,7 @@ export default function ResolveTicketButton({ reportId, onSuccess }: ResolveButt
 
                 // THE FIX: We use parseInt() to strip away the String and send a pure Integer to Postgres!
                 const { data, error: rpcError } = await supabase.rpc('resolve_report_with_geofence', {
-                    p_report_id: parseInt(reportId), 
+                    p_report_id: reportId, 
                     p_worker_lat: workerLat,
                     p_worker_lng: workerLng,
                     p_photo_url: publicUrl,
@@ -112,7 +112,7 @@ export default function ResolveTicketButton({ reportId, onSuccess }: ResolveButt
                     alert(`✅ Ticket Resolved! Location verified (Distance: ${data.distance_meters} meters).`);
                     if (onSuccess) onSuccess(); 
                 } else {
-                    alert(`🛑 ${data.error}`);
+                    alert(`🛑   ${data.error}`);
                 }
 
             } catch (error: unknown) {

@@ -26,7 +26,6 @@ export default function PendingPage() {
 
   const fetchReports = () => {
     setLoading(true);
-    // THE FIX: Fetch from our new secure, worker-specific API
     fetch("/api/pending") 
       .then((res) => res.json())
       .then((json) => {
@@ -101,6 +100,18 @@ export default function PendingPage() {
     );
   };
 
+  // Helper to format the Unix timestamp into a readable string
+  const formatDate = (timestamp: number) => {
+    if (!timestamp) return "Unknown Date";
+    return new Date(timestamp).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   if (loading && reports.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-50">
@@ -130,12 +141,12 @@ export default function PendingPage() {
 
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-left border-collapse min-w-[900px]">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-xs uppercase tracking-wider font-bold text-slate-500">
-                  <th className="p-5">Issue Type</th>
+                  <th className="p-5">Issue Details</th>
+                  <th className="p-5">Reported On</th>
                   <th className="p-5">Location</th>
-                  <th className="p-5">Assigned To</th>
                   <th className="p-5">SLA Status</th>
                   <th className="p-5 text-center">Action</th>
                 </tr>
@@ -148,38 +159,73 @@ export default function PendingPage() {
                       className={`transition-colors duration-200 group ${getRowStyle(report.risk_status, expandedRow === report.id)}`}
                       onClick={() => toggleRow(report.id)}
                     >
+                      {/* NEW: Issue Details with Photo Thumbnail */}
                       <td className="p-5">
-                        <div className="flex items-center gap-3">
-                          <span className="font-bold text-slate-800 capitalize">
-                            {report.issue_type}
-                          </span>
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden flex-shrink-0 shadow-sm">
+                            {report.image_path ? (
+                              <img
+                                src={`https://ytmuudbkuhkfqkzchtce.supabase.co/storage/v1/object/public/reports/${report.image_path}`}
+                                alt="Thumbnail"
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.src = "https://via.placeholder.com/100?text=Error";
+                                }}
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-[9px] text-slate-400 uppercase font-bold text-center p-1">
+                                No Img
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <span className="font-bold text-slate-800 capitalize block">
+                              {report.issue_type.replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-xs text-slate-400 font-mono mt-0.5 block">
+                              ID: {report.id.substring(0, 8)}...
+                            </span>
+                          </div>
                         </div>
                       </td>
+
+                      {/* NEW: Formatted Date Column */}
                       <td className="p-5">
-                        <span className="font-medium text-slate-700 block">
-                          {report.village_name || "Coordinates Logged"}
+                        <span className="text-sm font-medium text-slate-600 block">
+                          {formatDate(report.timestamp)}
                         </span>
                       </td>
+
+                      {/* NEW: Location GPS Fallback */}
                       <td className="p-5">
-                        <div className="text-sm font-medium text-slate-900 flex items-center">
-                          {report.worker_name || "Assigned"}
-                          <span className="text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded ml-2 uppercase">You</span>
-                        </div>
+                        <span className="font-medium text-slate-700 block">
+                          {report.village_name ? (
+                            report.village_name
+                          ) : (
+                            <span className="font-mono text-sm">
+                              {report.latitude.toFixed(4)}, {report.longitude.toFixed(4)}
+                            </span>
+                          )}
+                        </span>
+                        <span className="text-xs text-slate-500 mt-0.5 block">
+                          Assigned to: You
+                        </span>
                       </td>
+
                       <td className="p-5">
                         {renderStatusBadge(report)}
                       </td>
                       <td className="p-5 text-center">
                         <button
-                          className="text-indigo-600 hover:text-indigo-800 font-semibold text-sm focus:outline-none"
+                          className="text-indigo-600 hover:text-indigo-800 font-semibold text-sm focus:outline-none bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleRow(report.id);
                           }}
                         >
                           {expandedRow === report.id
-                            ? "Close Details ▲"
-                            : "Resolve Ticket ▼"}
+                            ? "Close ▲"
+                            : "Resolve ▼"}
                         </button>
                       </td>
                     </tr>
@@ -195,26 +241,43 @@ export default function PendingPage() {
                                 Original Evidence
                               </h4>
                               <div className="aspect-video bg-slate-200 rounded-lg overflow-hidden border border-slate-300 relative shadow-inner">
-                                {/* SAFE IMAGE LOADER */}
                                 {report.image_path ? (
-                                  <img
-                                    src={`https://ytmuudbkuhkfqkzchtce.supabase.co/storage/v1/object/public/reports/${report.image_path}`}
-                                    alt="Infrastructure Issue"
-                                    className="w-full h-full object-cover"
-                                    onError={(e) => {
-                                      e.currentTarget.src = "https://via.placeholder.com/400x200?text=No+Image+Available";
-                                    }}
-                                  />
+                                  <a 
+                                    href={`https://ytmuudbkuhkfqkzchtce.supabase.co/storage/v1/object/public/reports/${report.image_path}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="Click to view full image"
+                                  >
+                                    <img
+                                      src={`https://ytmuudbkuhkfqkzchtce.supabase.co/storage/v1/object/public/reports/${report.image_path}`}
+                                      alt="Infrastructure Issue"
+                                      className="w-full h-full object-cover hover:opacity-90 transition-opacity"
+                                      onError={(e) => {
+                                        e.currentTarget.src = "https://via.placeholder.com/400x200?text=Image+Load+Error";
+                                      }}
+                                    />
+                                  </a>
                                 ) : (
                                   <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-400 font-medium">
                                     No Image Provided
                                   </div>
                                 )}
                               </div>
-                              <div className="mt-4 bg-white p-3 rounded border border-slate-200">
-                                <p className="text-xs text-slate-500 font-mono">
-                                  Ticket ID: {report.id}
-                                </p>
+                              <div className="mt-4 bg-white p-4 rounded-lg border border-slate-200 flex justify-between items-center">
+                                <div>
+                                  <p className="text-xs text-slate-400 font-bold uppercase mb-1">Exact Coordinates</p>
+                                  <p className="text-sm text-slate-700 font-mono">
+                                    {report.latitude}, {report.longitude}
+                                  </p>
+                                </div>
+                                <a 
+                                  href={`https://www.google.com/maps/search/?api=1&query=${report.latitude},${report.longitude}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded border border-blue-200 hover:bg-blue-100 transition-colors"
+                                >
+                                  Open in Maps ↗
+                                </a>
                               </div>
                             </div>
 
@@ -224,7 +287,7 @@ export default function PendingPage() {
                                 Field Resolution
                               </h4>
                               <div className="bg-white p-5 rounded-lg border border-slate-300 shadow-sm">
-                                <p className="text-sm text-slate-600 mb-4">
+                                <p className="text-sm text-slate-600 mb-4 leading-relaxed">
                                   To close this ticket, you must be physically
                                   present at the site. Upload a photo of the
                                   completed repair. Your GPS coordinates will be

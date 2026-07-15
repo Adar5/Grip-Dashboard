@@ -16,17 +16,17 @@ export async function GET() {
     );
 
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (authError || !user || !user.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const safeUserEmail = user.email.trim().toLowerCase();
     
     // 2. IDENTIFY THEIR ROLE & JURISDICTION
     const { data: allDepts } = await supabase.from("departments").select("*");
-    const aeDept = allDepts?.find(d => d.contact_email && d.contact_email.trim().toLowerCase() === safeUserEmail);
+    const aeDept = allDepts?.find((d: any) => d.contact_email && d.contact_email.trim().toLowerCase() === safeUserEmail);
 
     let role = 'JE';
-    let eeDistrict = null;
-    let myDeptId = aeDept?.id;
+    let eeDistrict: string | null = null;
+    let myDeptId: any = aeDept?.id;
 
     if (aeDept) {
       role = 'AE';

@@ -17,9 +17,9 @@ function getDistanceInMeters(
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1 * (Math.PI / 180)) *
-      Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
@@ -29,7 +29,7 @@ interface PendingReport {
   id: string;
   issue_type: string;
   village_name: string | null;
-  timestamp: number;
+  timestamp: string | number; // Updated to accept string dates from DB
   status: string;
   latitude: number;
   longitude: number;
@@ -52,6 +52,7 @@ const EscalationModal = ({
 }) => {
   const [selectedRoute, setSelectedRoute] = useState("");
   const [isRouting, setIsRouting] = useState(false);
+  
 
   const routingOptions = [
     {
@@ -82,7 +83,6 @@ const EscalationModal = ({
 
   const handleEscalate = () => {
     setIsRouting(true);
-    // In production: await supabase.from('reports').update({ assigned_department: selectedRoute, status: 'Escalated' }).eq('id', report.id);
     setTimeout(() => {
       alert(
         `Success! Ticket officially transferred from Panchayat to: ${selectedRoute.toUpperCase()}`,
@@ -100,7 +100,6 @@ const EscalationModal = ({
         className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="bg-slate-900 p-5 text-white flex justify-between items-center">
           <div>
             <h3 className="font-black text-xl tracking-tight">
@@ -118,7 +117,6 @@ const EscalationModal = ({
           </button>
         </div>
 
-        {/* Body */}
         <div className="p-6">
           <p className="text-sm font-bold text-slate-700 mb-4">
             Why are you escalating Ticket #{report.id.split("-")[0]}?
@@ -144,7 +142,6 @@ const EscalationModal = ({
             ))}
           </div>
 
-          {/* Warning Footer */}
           <div className="mt-6 bg-amber-50 border border-amber-200 p-3 rounded-lg flex gap-3 items-start">
             <span className="text-amber-500 font-black">⚠️</span>
             <p className="text-xs text-amber-800 font-bold">
@@ -155,7 +152,6 @@ const EscalationModal = ({
           </div>
         </div>
 
-        {/* Action Bar */}
         <div className="p-5 border-t border-slate-100 bg-slate-50 flex gap-3">
           <button
             onClick={onClose}
@@ -180,7 +176,6 @@ const EscalationModal = ({
   );
 };
 
-// INLINE COMPONENT: Handles the Geo-Fence and Camera logic for a specific row
 const ResolutionPanel = ({
   report,
   onSuccess,
@@ -197,6 +192,7 @@ const ResolutionPanel = ({
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showEscalationModal, setShowEscalationModal] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null); // NEW: Holds the actual image file
 
   const handleVerifyLocation = () => {
     setIsLocating(true);
@@ -230,51 +226,85 @@ const ResolutionPanel = ({
   };
 
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const imgUrl = URL.createObjectURL(e.target.files[0]);
-      setCapturedPhoto(imgUrl);
-    }
-  };
-const handleSubmitResolution = async () => {
+  if (e.target.files && e.target.files[0]) {
+    const file = e.target.files[0];
+    setPhotoFile(file); // Save the actual file to upload later
+    
+    const imgUrl = URL.createObjectURL(file);
+    setCapturedPhoto(imgUrl); // Keep the preview for the UI
+  }
+};
+  
+  const handleSubmitResolution = async () => {
     try {
-      // 1. Send the update to Supabase
-      // NOTE: Ensure 'solid_waste_reports' matches your exact table name!
-      const { error } = await supabase
-        .from('reports') 
-        .update({ status: 'resolved' })
-        .eq('id', report.id);
-
-      if (error) {
-        throw error;
+      if (!photoFile) {
+        alert("Please capture a photo first.");
+        return;
       }
 
-      // 2. Show success and refresh the UI
-      alert(
-        `Success! Ticket ${report.id.split("-")[0]} marked as Resolved with Geo-Verified Photo.`
-      );
+      // 1. Create the filename AND append your new folder path
+      const fileExt = photoFile.name.split('.').pop() || 'jpg';
+      const fileName = `resolution_${report.id}_${Date.now()}.${fileExt}`;
+      const filePath = `resolved/${fileName}`; // <--- THE FOLDER FIX
+
+      // 2. Upload to the 'reports' bucket inside the 'resolved' folder
+      const { error: uploadError } = await supabase.storage
+        .from('reports')
+        .upload(filePath, photoFile, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error("Storage Upload Error:", uploadError);
+        throw new Error("Failed to upload the photo to storage.");
+      }
+
+      // 3. Update the REPORTS table so it disappears from the Secretary's Pending UI
+      const { error: reportsError } = await supabase
+        .from('reports') 
+        .update({ 
+          status: 'resolved', 
+          resolution_photo_url: filePath // Saves the exact folder path!
+        })
+        .eq('id', report.id); 
+
+      if (reportsError) throw reportsError;
+
+      // 4. Update the WORK_ORDERS table so it disappears from the JE/AE/EE Pending UI
+      const { error: woError } = await supabase
+        .from('work_orders') 
+        .update({ 
+          status: 'Resolved',
+          resolution_image_url: filePath,
+          resolved_at: new Date().toISOString()
+        })
+        .eq('report_uuid', report.id); 
+
+      // (We won't block the success alert if the work_order fails, just in case a work order hasn't been generated yet)
+      if (woError) console.warn("Work Order update warning:", woError);
       
-      onSuccess(); // This will remove it from the pending list
+      alert(`Success! Ticket ${report.id.split("-")[0]} marked as Resolved with Geo-Verified Photo.`);
+      onSuccess(); 
       
-    } catch (err) {
-      console.error("Failed to update Supabase:", err);
-      alert("Error saving resolution. Please try again.");
+    } catch (err: any) {
+      console.error("Resolution Submission Failed:", err);
+      alert(err.message || "Error saving resolution. Please try again.");
     }
   };
-
-  // DEV OVERRIDE: Double click the title to bypass GPS requirement during presentation
+  
   const handleDevOverride = () => {
     setWorkerLocation({
       lat: report.latitude + 0.0001,
       lng: report.longitude + 0.0001,
     });
-    setDistance(14); // Fake 14 meters away
+    setDistance(14); 
   };
 
   const isWithinRadius = distance !== null && distance <= 30;
 
   return (
     <div className="bg-white p-5 rounded-lg border border-slate-300 shadow-sm flex flex-col h-full relative">
-      {/* Dev Cheat Code Target */}
       <div
         onDoubleClick={handleDevOverride}
         className="absolute top-0 right-0 w-10 h-10 cursor-default opacity-0"
@@ -286,7 +316,6 @@ const handleSubmitResolution = async () => {
         against a 30-meter radius of the original report.
       </p>
 
-      {/* Step 1: GPS Verification */}
       {distance === null ? (
         <button
           onClick={handleVerifyLocation}
@@ -312,7 +341,6 @@ const handleSubmitResolution = async () => {
         </div>
       )}
 
-      {/* Step 2: Photo Capture */}
       <div
         className={`flex-1 min-h-[120px] transition-opacity ${isWithinRadius ? "opacity-100" : "opacity-40 pointer-events-none"}`}
       >
@@ -349,7 +377,6 @@ const handleSubmitResolution = async () => {
         )}
       </div>
 
-      {/* Step 3: Submit */}
       <button
         onClick={handleSubmitResolution}
         disabled={!capturedPhoto || !isWithinRadius}
@@ -366,14 +393,13 @@ const handleSubmitResolution = async () => {
         </button>
       </div>
 
-      {/* RENDER THE MODAL IF ACTIVE */}
       {showEscalationModal && (
         <EscalationModal
           report={report}
           onClose={() => setShowEscalationModal(false)}
           onSuccess={() => {
             setShowEscalationModal(false);
-            onSuccess(); // Triggers the parent fetchReports() to remove it from the list
+            onSuccess(); 
           }}
         />
       )}
@@ -388,26 +414,46 @@ export default function PendingPage() {
 
   const fetchReports = () => {
     setLoading(true);
-    // 1. Point to the smart API that knows who the logged-in Secretary is
     fetch("/api/panchayat/dashboard")
       .then((res) => res.json())
       .then((json) => {
         if (json.success) {
-          // 2. Read from json.tickets (which our API outputs)
-          const fetchedData = json.tickets || [];
+          const fetchedData = json.tickets || json.reports || [];
+          const now = new Date().getTime();
 
-          // 3. The Domain Filter: Only keep rows that are Active, Waste, AND MINE
-          const activeTickets = fetchedData.filter((r: PendingReport) => {
-            // IF IT DOESN'T BELONG TO MY VILLAGE, THROW IT OUT IMMEDIATELY
+          const processedTickets = fetchedData.map((r: any) => {
+            const reportDate = r.timestamp || r.created_at || r.inserted_at;
+            let risk = r.risk_status;
+            let hrs = r.hours_remaining;
+
+            if (risk === undefined && reportDate) {
+              const createdTime = new Date(reportDate).getTime();
+              const dueTime = createdTime + (48 * 60 * 60 * 1000); 
+              hrs = Math.round((dueTime - now) / (1000 * 60 * 60));
+              
+              if (hrs < 0) risk = "Breached";
+              else if (hrs < 24) risk = "High Risk";
+              else risk = "On Track";
+            }
+
+            return {
+               ...r,
+               timestamp: reportDate,
+               risk_status: risk,
+               hours_remaining: Math.abs(hrs || 0)
+            };
+          });
+
+          // THE FIX: Put the is_my_territory filter back!
+          const activeTickets = processedTickets.filter((r: PendingReport) => {
+            // Throw it out immediately if it does not belong to this secretary
             if (!r.is_my_territory) return false;
 
-            // Condition A: It must NOT be resolved/completed
             const isPending =
               r.status?.toLowerCase() !== "resolved" &&
               r.status?.toLowerCase() !== "completed";
 
-            // Condition B: It must be related to Solid Waste
-            const issue = (r.issue_type || "").toLowerCase();
+            const issue = (r.issue_type || r.display_type || "").toLowerCase();
             const isWasteRelated =
               issue.includes("garb") ||
               issue.includes("dump") ||
@@ -419,7 +465,6 @@ export default function PendingPage() {
             return isPending && isWasteRelated;
           });
 
-          // 4. Sort by SLA Risk
           activeTickets.sort((a: PendingReport, b: PendingReport) => {
             const getScore = (status?: string) => {
               if (status === "Breached") return 3;
@@ -441,6 +486,7 @@ export default function PendingPage() {
         setLoading(false);
       });
   };
+
   useEffect(() => {
     fetchReports();
   }, []);
@@ -484,6 +530,14 @@ export default function PendingPage() {
     );
   };
 
+  const formatDateTime = (dateString: string | number) => {
+    if (!dateString) return "Date Unknown";
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-IN', {
+      day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+  };
+
   if (loading && reports.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-50">
@@ -517,7 +571,7 @@ export default function PendingPage() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-xs uppercase tracking-wider font-bold text-slate-500">
-                  <th className="p-5">Issue Type</th>
+                  <th className="p-5">Issue & Date</th>
                   <th className="p-5">Location</th>
                   <th className="p-5">Assigned To</th>
                   <th className="p-5">SLA Status</th>
@@ -532,13 +586,16 @@ export default function PendingPage() {
                       onClick={() => toggleRow(report.id)}
                     >
                       <td className="p-5">
-                        <span className="font-bold text-slate-800 capitalize">
-                          {(report.issue_type || 'unclassified_hazard').replace(/_/g, " ")}
+                        <span className="font-bold text-slate-800 capitalize block">
+                          {(report.issue_type || report.display_type || 'unclassified_hazard').replace(/_/g, " ")}
+                        </span>
+                        <span className="text-xs text-slate-500 mt-1 block">
+                          Reported: {formatDateTime(report.timestamp)}
                         </span>
                       </td>
                       <td className="p-5">
                         <span className="font-medium text-slate-700 block">
-                          {report.village_name || "Mapped Location"}
+                          {report.village_name || report.location_label || "Mapped Location"}
                         </span>
                       </td>
                       <td className="p-5">
@@ -562,7 +619,6 @@ export default function PendingPage() {
                       </td>
                     </tr>
 
-                    {/* Expandable Details Drawer */}
                     {expandedRow === report.id && (
                       <tr>
                         <td
@@ -570,7 +626,6 @@ export default function PendingPage() {
                           className="bg-slate-50 p-0 border-b-2 border-indigo-100"
                         >
                           <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
-                            {/* Left Column: Original Evidence */}
                             <div className="flex flex-col h-full">
                               <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">
                                 Original Report Evidence
@@ -601,12 +656,10 @@ export default function PendingPage() {
                               </div>
                             </div>
 
-                            {/* Right Column: Geo-Fence Resolution Action */}
                             <div className="flex flex-col h-full">
                               <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">
                                 Field Resolution
                               </h4>
-                              {/* Injecting the isolated resolution component */}
                               <ResolutionPanel
                                 report={report}
                                 onSuccess={() => {

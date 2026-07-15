@@ -55,7 +55,10 @@ export default function GlobalLogin() {
       }
 
       if (worker) {
-        const deptType = worker.departments?.department_type;
+        const workerDept = Array.isArray((worker as any)?.departments)
+          ? (worker as any).departments[0]
+          : (worker as any)?.departments;
+        const deptType = workerDept?.department_type;
 
         // --- NEW LOGIC: Route GWMC based on email or specialty ---
         if (safeEmail.includes('gwmc') || worker.specialty === 'Waste Management') {

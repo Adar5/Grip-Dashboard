@@ -14,17 +14,17 @@ export async function GET() {
     );
 
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (authError || !user || !user.email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const safeUserEmail = user.email.trim().toLowerCase();
     const { data: allDepts } = await supabase.from("departments").select("*");
 
-    const aeDept = allDepts?.find(d => d.contact_email && d.contact_email.trim().toLowerCase() === safeUserEmail);
+    const aeDept = allDepts?.find((d: any) => d.contact_email && d.contact_email.trim().toLowerCase() === safeUserEmail);
 
-    let workerProfile = null;
-    let myDept = aeDept;
+    let workerProfile: any = null;
+    let myDept: any = aeDept;
     let role = 'JE';
-    let eeDistrict = null;
+    let eeDistrict: string | null = null;
     
     if (aeDept) {
       role = 'AE';
@@ -90,12 +90,18 @@ export async function GET() {
       relevantWorkOrders = wo || [];
     }
 
-    // FIX 3: Robust UUID matching to ensure tickets don't go missing
-    const reportIdentifiers = relevantWorkOrders.map(wo => wo.report_uuid || wo.report_id).filter(Boolean);
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const reportIdentifiers = relevantWorkOrders
+  .map(wo => String(wo.report_uuid || wo.report_id))
+  .filter(id => uuidRegex.test(id));
     if (reportIdentifiers.length === 0) return NextResponse.json({ success: true, role, resolvedTasks: [] });
 
     // FIX 4: Pulling directly from 'reports' instead of the broken 'dashboard_reports' view
-    const { data: allReports, error: reportsError } = await supabase.from('reports').select('*');
+    const { data: allReports, error: reportsError } = await supabase
+  .from('reports')
+  .select('*')
+  .in('id', reportIdentifiers);
     
     if (reportsError) {
       console.error("Database Error:", reportsError);
@@ -140,7 +146,8 @@ export async function GET() {
         worker_name: assignedWorkerName, 
         resolved_at: resolutionTimestamp,
         due_date: wo.due_date || new Date().toISOString(),
-        is_sla_breached: isBreached
+        is_sla_breached: isBreached,
+        resolution_photo_url: report?.resolution_photo_url || null
       };
     });
 

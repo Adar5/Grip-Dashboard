@@ -11,6 +11,7 @@ interface ResolvedTask {
   resolved_at: string;
   due_date: string;
   is_sla_breached: boolean;
+  resolution_photo_url: string | null; // Added this property!
 }
 
 export default function ResolvedPage() {
@@ -24,7 +25,7 @@ export default function ResolvedPage() {
       .then(json => {
         if (json.success) {
           setTasks(json.resolvedTasks);
-          setUserRole(json.role); // Save the role to adjust the UI!
+          setUserRole(json.role); 
         }
         setLoading(false);
       });
@@ -44,7 +45,6 @@ export default function ResolvedPage() {
       <div className="mb-8 flex flex-col md:flex-row md:justify-between md:items-end">
         <div>
           <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
-             {/* DYNAMIC TITLE BASED ON ROLE */}
              {userRole === 'AE' ? 'Department Resolved History' : 'My Resolved Actions'}
           </h1>
           <p className="text-slate-500 mt-1 font-medium">
@@ -60,12 +60,13 @@ export default function ResolvedPage() {
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[800px]">
+          <table className="w-full text-left border-collapse min-w-[900px]">
             <thead>
               <tr className="bg-slate-100 border-b border-slate-200 text-xs uppercase tracking-wider font-bold text-slate-500">
                 <th className="p-5">Work Order</th>
                 <th className="p-5">Location</th>
                 <th className="p-5">Completed By</th>
+                <th className="p-5">Proof</th>
                 <th className="p-5">Resolution Time</th>
                 <th className="p-5">SLA Status</th>
               </tr>
@@ -91,13 +92,37 @@ export default function ResolvedPage() {
                         </div>
                         <span className="font-semibold text-slate-700">
                            {task.worker_name} 
-                           {/* ONLY show the "You" badge if they are a JE */}
                            {userRole === 'JE' && (
                              <span className="text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded ml-1 uppercase">You</span>
                            )}
                         </span>
                       </div>
                     </td>
+                    
+                    {/* NEW PHOTO CELL */}
+                    <td className="p-5">
+                      {task.resolution_photo_url ? (
+                        <a 
+                          href={task.resolution_photo_url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          title="Click to view full image"
+                          className="block w-14 h-14 rounded-lg overflow-hidden border border-slate-300 shadow-sm hover:ring-2 hover:ring-emerald-500 hover:shadow-md transition-all"
+                        >
+                          <img 
+                            src={task.resolution_photo_url} 
+                            alt="Resolution Proof" 
+                            className="w-full h-full object-cover"
+                          />
+                        </a>
+                      ) : (
+                        <div className="w-14 h-14 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400 border border-slate-200 border-dashed text-[10px] text-center p-1 font-medium leading-tight">
+                          No Photo
+                        </div>
+                      )}
+                    </td>
+                    {/* END NEW PHOTO CELL */}
+
                     <td className="p-5 text-sm font-medium text-slate-600">
                       {resolvedDate}
                     </td>
@@ -118,7 +143,7 @@ export default function ResolvedPage() {
               
               {tasks.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-12 text-center text-slate-500">
+                  <td colSpan={6} className="p-12 text-center text-slate-500">
                     <span className="text-4xl block mb-3">🛠️</span>
                     <p className="font-bold text-lg text-slate-700">No resolved tasks found</p>
                     <p className="text-sm mt-1">When tasks are completed, they will appear in this audit log.</p>

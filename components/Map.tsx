@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
@@ -15,7 +16,7 @@ export interface MapMarker {
   issue_type?: string;
   village_name?: string;
   ai_predictions?: string | Array<{ confidence: number }> | null;
-  is_my_territory?: boolean; // <-- Added this to catch the API flag!
+  is_my_territory?: boolean; 
 }
 
 const getCustomIcon = (hexColor?: string) => {
@@ -49,13 +50,32 @@ const getConfidenceScore = (predictions: string | Array<{ confidence: number }> 
   return "N/A";
 };
 
-export default function Map({ markers = [] }: { markers: MapMarker[] }) {
+export default function Map({ markers = [], reports }: { markers?: MapMarker[]; reports?: MapMarker[] }) {
+  // THE FIX: State to track if component has safely mounted in the browser
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+    // Cleanup prevents the "Map container is being reused" error on hot-reloads
+    return () => setIsMounted(false);
+  }, []);
+
   const goaCenter: [number, number] = [15.2993, 74.1240];
+  const activeMarkers = (reports && reports.length > 0 ? reports : markers) ?? [];
 
   const goaBounds = L.latLngBounds(
     [14.50, 73.00], 
     [16.00, 75.00]  
   );
+
+  // THE FIX: Don't try to render the Leaflet map until the DOM is actually ready
+  if (!isMounted) {
+    return (
+      <div className="h-full min-h-[500px] w-full bg-slate-50 flex items-center justify-center rounded-xl border border-slate-200">
+         <div className="text-slate-400 font-bold animate-pulse">Initializing Map Engine...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full min-h-[500px] w-full bg-slate-100 z-0 relative rounded-xl overflow-hidden">
@@ -72,7 +92,7 @@ export default function Map({ markers = [] }: { markers: MapMarker[] }) {
           attribution="&copy; OpenStreetMap &copy; CARTO"
         />
 
-        {markers.map((marker, index) => {
+        {activeMarkers.map((marker, index) => {
           if (typeof marker.lat !== 'number' || typeof marker.lng !== 'number' || isNaN(marker.lat)) {
             return null; 
           }
@@ -84,7 +104,6 @@ export default function Map({ markers = [] }: { markers: MapMarker[] }) {
           const safeStatus = (marker.status || "pending").toLowerCase();
 
           // THE MAGIC COLOR FIX: Red for mine, Blue for others. 
-          // (It also respects marker.color if you pass it manually elsewhere in your app)
           let dotColor = marker.color;
           if (!dotColor) {
              dotColor = marker.is_my_territory ? "#ef4444" : "#3b82f6"; // Tailwind red-500 & blue-500
@@ -111,7 +130,6 @@ export default function Map({ markers = [] }: { markers: MapMarker[] }) {
                       <strong>Area:</strong> {marker.description || marker.village_name || marker.title || marker.issue_type || "Location not available"}
                     </p>
 
-                    {/* Quick indicator inside the popup so the user knows if it's their job to fix it */}
                     <p>
                       <strong>Jurisdiction:</strong> {marker.is_my_territory ? <span className="text-red-600 font-bold">My Area</span> : "Other Locality"}
                     </p>

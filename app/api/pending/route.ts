@@ -14,37 +14,49 @@ export async function GET() {
     );
 
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (authError || !user ) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const safeUserEmail = user.email.trim().toLowerCase();
     const { data: allDepts } = await supabase.from("departments").select("*");
 
-    const aeDept = allDepts?.find(d => d.contact_email && d.contact_email.trim().toLowerCase() === safeUserEmail);
-
-    let workerProfile = null;
-    let myDept = aeDept;
+    let workerProfile:any = null;
+    let myDept = null;
     let role = 'JE';
-    let eeDistrict = null;
+    let eeDistrict: string | null = null;
     
-    if (aeDept) {
-      role = 'AE';
-    } else {
-      const { data: worker } = await supabase.from("field_workers").select("*").ilike("email", safeUserEmail).single();
-      workerProfile = worker;
-      if (workerProfile) {
-        if (workerProfile.hierarchy_level === 5) {
-          role = 'CE';
-        } else if (workerProfile.hierarchy_level === 4) {
-          role = 'EE';
-          eeDistrict = workerProfile.specialty.includes("North") ? "North Goa" : "South Goa";
-        } else {
-          role = 'JE';
-          myDept = allDepts?.find(d => String(d.id) === String(workerProfile.department_id));
-        }
+    // 1. Fetch Field Worker profile first (Absolute source of truth)
+    const { data: worker } = await supabase.from("field_workers").select("*").ilike("email", safeUserEmail).single();
+    workerProfile = worker;
+
+    if (workerProfile) {
+      const spec = (workerProfile.specialty || "").toLowerCase();
+      
+      if (workerProfile.hierarchy_level === 5 || spec.includes("chief")) {
+        role = 'CE';
+      } else if (workerProfile.hierarchy_level === 4 || spec.includes("executive")) {
+        role = 'EE';
+        eeDistrict = spec.includes("north") ? "North Goa" : "South Goa";
+      } else if (workerProfile.hierarchy_level === 3 || spec.includes("assistant engineer") || spec === "ae") {
+        // THE FIX: Strict AE matching! "Assistant" alone is no longer enough to get manager privileges.
+        role = 'AE';
+        myDept = allDepts?.find(d => String(d.id) === String(workerProfile.department_id));
+      } else {
+        // All other workers (including Assistant Linemen, etc.) are safely locked here as JEs.
+        role = 'JE';
+        myDept = allDepts?.find(d => String(d.id) === String(workerProfile.department_id));
+      }
+    } 
+    
+    // 2. Fallback for AEs who are ONLY in the departments table
+    if (!workerProfile) {
+      const aeDept = allDepts?.find(d => d.contact_email && d.contact_email.trim().toLowerCase() === safeUserEmail);
+      if (aeDept) {
+        role = 'AE';
+        myDept = aeDept;
       }
     }
 
-    if (!aeDept && !workerProfile) return NextResponse.json({ success: false, error: "Profile not found." }, { status: 403 });
+    if (!myDept && !workerProfile) return NextResponse.json({ success: false, error: "Profile not found." }, { status: 403 });
 
     let relevantWorkOrders: any[] = [];
     let departmentWorkers: any[] = [];
@@ -54,7 +66,6 @@ export async function GET() {
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
       if (workerIds.length > 0) {
-        // FIX: CE only sees tickets that have escalated to Level 3 or higher
         const { data: wo } = await supabase.from("work_orders")
           .select("*")
           .in("worker_id", workerIds)
@@ -64,44 +75,64 @@ export async function GET() {
         relevantWorkOrders = wo || [];
       }
     } else if (role === 'EE') {
-      const districtDepts = allDepts?.filter(d => d.district === eeDistrict) || [];
+      const searchKeyword = eeDistrict?.includes("North") ? "North" : "South";
+      const districtDepts = allDepts?.filter(d => d.district && d.district.includes(searchKeyword)) || [];
       const deptIds = districtDepts.map(d => d.id);
-      const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id").in("department_id", deptIds);
+      
+      if (deptIds.length > 0) { 
+          const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id").in("department_id", deptIds);
+          departmentWorkers = workers || [];
+          const workerIds = departmentWorkers.map(w => w.id);
+          if (workerIds.length > 0) {
+            const { data: wo } = await supabase.from("work_orders")
+              .select("*")
+              .in("worker_id", workerIds)
+              .neq("status", "Resolved")
+              .neq("status", "Completed")
+              .eq("status", "Pending");
+            relevantWorkOrders = wo || [];
+          }
+      }
+    } else if (role === 'AE') {
+      const { data: workers, error: workerErr } = await supabase
+        .from("field_workers")
+        .select("id, worker_name, department_id")
+        .eq("department_id", myDept?.id);
+
+      if (workerErr) console.error("🚨 [AE ERROR] Failed to fetch JEs:", workerErr);
+
       departmentWorkers = workers || [];
       const workerIds = departmentWorkers.map(w => w.id);
+
       if (workerIds.length > 0) {
-        // FIX: EE only sees tickets that have escalated to Level 2 or higher
-        const { data: wo } = await supabase.from("work_orders")
+        const { data: wo, error: woErr } = await supabase
+          .from("work_orders")
           .select("*")
           .in("worker_id", workerIds)
           .neq("status", "Resolved")
-          .neq("status", "Completed")
-          .gte("escalation_level", 2);
-        relevantWorkOrders = wo || [];
-      }
-    } else if (role === 'AE') {
-      const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id").eq("department_id", myDept?.id);
-      departmentWorkers = workers || [];
-      const workerIds = departmentWorkers.map(w => w.id);
-      if (workerIds.length > 0) {
-        const { data: wo } = await supabase.from("work_orders").select("*").in("worker_id", workerIds).neq("status", "Resolved").neq("status", "Completed");
+          .neq("status", "Completed");
+
+        if (woErr) console.error("🚨 [AE ERROR] Failed to fetch Work Orders:", woErr);
         relevantWorkOrders = wo || [];
       }
     } else {
-      const { data: wo } = await supabase.from("work_orders").select("*").eq("worker_id", workerProfile.id).neq("status", "Resolved").neq("status", "Completed");
+      // THE RESULT: The JE is now safely locked into this block, 
+      // where Supabase STRICTLY filters by their exact personal workerProfile.id!
+      const { data: wo } = await supabase
+        .from("work_orders")
+        .select("*")
+        .eq("worker_id", workerProfile.id)
+        .neq("status", "Resolved")
+        .neq("status", "Completed");
       relevantWorkOrders = wo || [];
     }
 
-    // Ensure we actually have tickets to look for
     const reportIdentifiers = relevantWorkOrders.map(wo => wo.report_uuid || wo.report_id).filter(Boolean);
     if (reportIdentifiers.length === 0) return NextResponse.json({ success: true, role, reports: [] });
 
-    // Query 'reports' directly
     const { data: allReports, error: reportsError } = await supabase.from("reports").select("*");
     
-    if (reportsError) {
-      console.error("Database Error:", reportsError);
-    }
+    if (reportsError) console.error("Database Error:", reportsError);
     
     const now = new Date().getTime();
 
@@ -151,7 +182,15 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json({ success: true, role, reports: activeTickets });
+    let finalReports = activeTickets;
+    if (role !== 'JE') {
+        finalReports = activeTickets.filter(ticket => {
+            const typeStr = (ticket.issue_type || "").toLowerCase();
+            return typeStr.includes("pothole"); 
+        });
+    }
+
+    return NextResponse.json({ success: true, role, reports: finalReports });
 
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });

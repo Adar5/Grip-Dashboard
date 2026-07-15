@@ -77,7 +77,7 @@ export default function DumpingDashboard({ apiEndpoint, roleName }: { apiEndpoin
             </h2>
           </div>
           <div className="flex-1 rounded-xl overflow-hidden border border-slate-200 min-h-[500px] relative z-0 bg-slate-50">
-             {/* Pass your mapping array here, tailored for garbage pins */}
+             {/* @ts-ignore */}
             <DynamicMap reports={reports} role={roleName} />
           </div>
         </div>

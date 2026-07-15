@@ -21,7 +21,10 @@ export async function GET(request: Request) {
       .eq('auth_user_id', user.id)
       .single();
 
-    const myPanchayat = worker?.departments?.department_name;
+    const workerDept = Array.isArray((worker as any)?.departments)
+      ? (worker as any).departments[0]
+      : (worker as any)?.departments;
+    const myPanchayat = workerDept?.department_name;
     if (!myPanchayat) return NextResponse.json({ error: 'No village assigned' }, { status: 400 });
 
     // Fetch Inward/Outward
