@@ -31,10 +31,8 @@ export async function GET() {
     } else {
       const { data: worker } = await supabase.from("field_workers").select("*").ilike("email", safeUserEmail).single();
       workerProfile = worker;
-      
       if (workerProfile) {
         const spec = (workerProfile.specialty || "").toLowerCase();
-        
         if (workerProfile.hierarchy_level === 5 || spec.includes("chief")) {
           role = 'CE'; 
         } else if (workerProfile.hierarchy_level === 4 || spec.includes("executive")) {
@@ -59,7 +57,7 @@ export async function GET() {
     let relevantWorkOrders: any[] = [];
     let departmentWorkers: any[] = [];
 
-    // --- FIX 1: REMOVED ESCALATION FILTERS SO MANAGERS SEE ALL TICKETS IN TERRITORY ---
+    // GRAB WORK ORDERS
     if (role === 'CE') {
       const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id");
       departmentWorkers = workers || [];
@@ -71,7 +69,6 @@ export async function GET() {
     } else if (role === 'EE') {
       const districtDepts = allDepts?.filter(d => d.district && d.district.includes(eeDistrict!)) || [];
       const deptIds = districtDepts.map(d => d.id);
-      
       if (deptIds.length > 0) {
         const { data: workers } = await supabase.from("field_workers").select("id, worker_name, department_id").in("department_id", deptIds);
         departmentWorkers = workers || [];
@@ -94,87 +91,98 @@ export async function GET() {
       relevantWorkOrders = wo || [];
     }
 
-    const { data: allReports } = await supabase.from("dashboard_reports").select("*");
+    // --- CRITICAL FIX 1: Query the base 'reports' table directly instead of dashboard_reports ---
+    const { data: allReports } = await supabase.from("reports").select("*");
 
     const processedTickets = allReports?.map((report) => {
-        const matchingWorkOrder = relevantWorkOrders.find((wo) => {
-            const woId = wo.report_uuid || wo.report_id;
-            const reportId = report.uuid || report.id;
-            return String(woId) === String(reportId);
-        });
-        
-        let isMine = !!matchingWorkOrder;
+      // --- CRITICAL FIX 2: Strict UUID matching ---
+      const matchingWorkOrder = relevantWorkOrders.find((wo) => {
+        const woId = wo.report_uuid || wo.report_id; // Check report_uuid first
+        return String(woId) === String(report.id);
+      });
+      
+      let isMine = !!matchingWorkOrder;
 
-        // --- FIX 2: GEOGRAPHIC FALLBACK ---
-        // If the ticket has no work order, check if it geographically belongs to the manager
-        if (!isMine) {
-            if (role === 'CE') {
-                isMine = true; 
-            } else if (role === 'EE' && eeDistrict) {
-                const rDistrict = String(report.district_name || report.department_name || report.assigned_department || "").toLowerCase();
-                if (rDistrict.includes(eeDistrict.toLowerCase())) isMine = true;
-            } else if (role === 'AE' && myDept) {
-                const rDept = String(report.department_name || report.assigned_department || "").toLowerCase();
-                const myDeptName = String(myDept.department_name || "").toLowerCase();
-                if (myDeptName && rDept.includes(myDeptName)) isMine = true;
-            }
+      // Fallback geographic matching
+      if (!isMine) {
+        if (role === 'CE') {
+          isMine = true; 
+        } else if (role === 'EE' && eeDistrict) {
+          const rDistrict = String(report.district_name || report.department_name || report.assigned_department || "").toLowerCase();
+          if (rDistrict.includes(eeDistrict.toLowerCase())) isMine = true;
+        } else if (role === 'AE' && myDept) {
+          const rDept = String(report.department_name || report.assigned_department || "").toLowerCase();
+          const myDeptName = String(myDept.department_name || "").toLowerCase();
+          if (myDeptName && rDept.includes(myDeptName)) isMine = true;
         }
+      }
 
-        let assignedWorkerName = "Other Division";
-        if (isMine) {
-            if (role === 'AE' || role === 'EE' || role === 'CE') {
-                if (matchingWorkOrder) {
-                    const assignedWorker = departmentWorkers.find(w => String(w.id) === String(matchingWorkOrder.worker_id));
-                    if (assignedWorker) {
-                        assignedWorkerName = assignedWorker.worker_name;
-                        if (role === 'EE' || role === 'CE') {
-                            const wDept = allDepts?.find(d => d.id === assignedWorker.department_id);
-                            if (wDept) assignedWorkerName += ` (${wDept.taluka_name})`;
-                        }
-                    } else {
-                        assignedWorkerName = "Unassigned JE";
-                    }
-                } else {
-                    assignedWorkerName = "Awaiting Assignment";
-                }
+      let assignedWorkerName = "Other Division";
+      if (isMine) {
+        if (role === 'AE' || role === 'EE' || role === 'CE') {
+          if (matchingWorkOrder) {
+            const assignedWorker = departmentWorkers.find(w => String(w.id) === String(matchingWorkOrder.worker_id));
+            if (assignedWorker) {
+              assignedWorkerName = assignedWorker.worker_name;
+              if (role === 'EE' || role === 'CE') {
+                const wDept = allDepts?.find(d => d.id === assignedWorker.department_id);
+                if (wDept) assignedWorkerName += ` (${wDept.taluka_name})`;
+              }
             } else {
-                assignedWorkerName = workerProfile.worker_name;
+              assignedWorkerName = "Unassigned JE";
             }
+          } else {
+            assignedWorkerName = "Awaiting Assignment";
+          }
+        } else {
+          assignedWorkerName = workerProfile.worker_name;
         }
+      }
 
-        let type = report.issue_type || "Pothole / Issue";
-        if (type.toLowerCase().includes("massive") || type.toLowerCase().includes("high severity")) type = "Major Pothole";
+      let type = report.issue_type || "Pothole / Issue";
+      if (type.toLowerCase().includes("massive") || type.toLowerCase().includes("high severity")) type = "Major Pothole";
 
-        const locationLabel = [
-          report.village_name,
-          report.assigned_department,
-          report.department_name,
-          report.taluka_name,
-          report.district_name,
-        ].find((value) => value && String(value).trim()) || 
-          (report.latitude && report.longitude
-            ? `Lat ${Number(report.latitude).toFixed(4)}, Lng ${Number(report.longitude).toFixed(4)}`
-            : "Coordinates logged");
+      const locationLabel = [
+        report.village_name,
+        report.assigned_department,
+        report.department_name,
+        report.taluka_name,
+        report.district_name,
+      ].find((value) => value && String(value).trim()) || 
+      (report.latitude && report.longitude
+        ? `Lat ${Number(report.latitude).toFixed(4)}, Lng ${Number(report.longitude).toFixed(4)}`
+        : "Coordinates logged");
 
-        return {
-          id: report.id,
-          latitude: report.latitude, 
-          longitude: report.longitude,
-          display_type: type,
-          status: matchingWorkOrder ? matchingWorkOrder.status : "Pending",
-          is_my_territory: isMine,
-          worker_name: assignedWorkerName,
-          ai_predictions: report.ai_predictions,
-          village_name: locationLabel,
-          location_label: locationLabel,
-        };
-      }) || [];
+      // --- CRITICAL FIX 3: Base report status fallback ---
+      const finalStatus = matchingWorkOrder ? matchingWorkOrder.status : (report.status || "Pending");
 
-    const activeTicketsOnly = processedTickets.filter((t) => {
-      const statusText = (t.status || "").toLowerCase();
-      const isResolved = statusText === "resolved" || statusText === "completed";
-      const isPotholeOrMine = t.display_type.toLowerCase().includes("pothole") || t.is_my_territory;
-      return !isResolved && isPotholeOrMine;
+      return {
+        id: report.id,
+        latitude: report.latitude, 
+        longitude: report.longitude,
+        display_type: type,
+        status: finalStatus,
+        is_my_territory: isMine,
+        worker_name: assignedWorkerName,
+        ai_predictions: report.ai_predictions,
+        village_name: locationLabel,
+        location_label: locationLabel,
+      };
+    }) || [];
+
+    // CALCULATE EXACT COUNTS FOR YOUR TERRITORY
+    const myTerritoryTickets = processedTickets.filter(t => t.is_my_territory);
+    const resolvedCount = myTerritoryTickets.filter(t => {
+      const s = (t.status || "").toLowerCase();
+      // Ensure we catch all variations of resolved/completed
+      return s.includes("resolved") || s.includes("completed"); 
+    }).length;
+    const pendingCount = myTerritoryTickets.length - resolvedCount;
+
+    // Filter tickets to send to frontend (keep resolved ones so they count in total!)
+    const frontendTickets = processedTickets.filter((t) => {
+      const typeStr = (t.display_type || "").toLowerCase();
+      return typeStr.includes("pothole") || t.is_my_territory;
     });
 
     const displayDepartmentName = role === 'CE' ? "Goa State Operations" : role === 'EE' ? `${eeDistrict} Operations` : (myDept?.department_name || "Unknown");
@@ -183,10 +191,11 @@ export async function GET() {
       success: true,
       currentUser: { name: userName, level: userLevel, taluka: userTaluka, role: role },
       departments: [{
-          department_name: displayDepartmentName,
-          tickets: activeTicketsOnly,
-          total_reports: activeTicketsOnly.length,
-          pending_reports: activeTicketsOnly.filter((t) => t.is_my_territory).length,
+        department_name: displayDepartmentName,
+        tickets: frontendTickets, 
+        total_reports: frontendTickets.length,
+        pending_reports: pendingCount,
+        resolved_reports: resolvedCount,
       }],
     });
   } catch (error: any) {
