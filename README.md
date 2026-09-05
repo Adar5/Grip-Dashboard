@@ -49,7 +49,7 @@ Ensure you have the following installed on your machine:
 
 ### 2. Clone the Repository
 ```bash
-git clone https://github.com/your-username/Grip-Dashboard.git
+git clone https://github.com/Adar5/Grip-Dashboard.git
 cd Grip-Dashboard
 ```
 
