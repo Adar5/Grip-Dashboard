@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🌍 GRIP - Goa Real-Time Infrastructure Protection
 
-## Getting Started
+**GRIP** is a comprehensive civic tech solution designed to monitor, assign, and resolve infrastructure hazards like potholes and garbage overflow. Built for the State of Goa, it connects citizen reports directly to local administrative bodies (BDOs, PWD, GWMC) using AI classification, automated SLA tracking, and interactive mapping.
 
-First, run the development server:
+---
 
+## ✨ Key Features
+
+*   **🗺️ Live Territory Mapping:** Dynamic, color-coded maps showing active and resolved hazards based on geographic jurisdiction (Taluka/District).
+*   **🔐 Role-Based Access Control (RBAC):** Granular, secure dashboards tailored for different administrative levels (BDO, CE, EE, AE, JE).
+*   **🤖 AI Severity Prediction:** Automatically classifies issue types (e.g., *High Severity Pothole*, *Garbage Overflow*) and assigns confidence scores using integrated machine learning.
+*   **⏳ Automated SLA Escalations:** Built-in accountability. If a village panchayat misses a deadline, BDOs can issue one-click warnings or escalate tickets directly to the State (GWMC).
+*   **📧 Automated Email Routing:** Sends localized resolution proofs and escalation warnings to specific department secretaries based on intelligent district mapping (North Goa vs. South Goa).
+
+---
+
+## 🛠️ Tech Stack
+
+**Frontend & API:**
+*   **Framework:** [Next.js](https://nextjs.org/) (React, App Router)
+*   **Styling:** [Tailwind CSS](https://tailwindcss.com/)
+
+**Backend & Infrastructure:**
+*   **Database:** [Supabase](https://supabase.com/) (PostgreSQL)
+*   **Storage:** Supabase Storage (for High-Res Evidence & Resolution Photos)
+*   **Authentication:** Supabase Auth
+*   **Deployment:** [Docker](https://www.docker.com/) (Containerized for VPS hosting)
+*   **Workflow Automation:** [n8n](https://n8n.io/) (For webhook-triggered email notifications)
+
+---
+
+## 🗄️ Database Architecture
+
+The system relies on a strictly relational PostgreSQL architecture:
+*   `dashboard_reports` / `reports`: Stores raw citizen submissions, AI predictions, and geographic coordinates.
+*   `work_orders`: Links reports to specific workers, tracking statuses, SLAs, and escalation levels.
+*   `departments`: Defines jurisdictions (Districts, Talukas) and stores official contact emails.
+*   `field_workers`: Manages worker hierarchies (Level 1-5) and their assigned departments.
+
+---
+
+## 🚀 Local Setup & Installation
+
+### 1. Prerequisites
+Ensure you have the following installed on your machine:
+*   [Git](https://git-scm.com/)
+*   [Docker](https://www.docker.com/) (If running via containers)
+*   [Node.js](https://nodejs.org/) (v18 or higher for local development)
+
+### 2. Clone the Repository
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/your-username/Grip-Dashboard.git
+cd Grip-Dashboard
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 3. Environment Variables
+Create a .env.local file in the root directory and add your secure keys:
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+### 4. Run via Docker 
+To build and spin up the dashboard exactly as it runs on the server:
+```bash
+# Build the Docker image
+docker build --no-cache -t grip-dashboard:latest .
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+# Run the container on port 3000
+docker run -d --name grip-app -p 3000:3000 --restart unless-stopped grip-dashboard:latest
+```
+The app will be available at http://localhost:3000
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 5. Run via Node (For Local Development)
+```bash
+npm install
+npm run dev
+```
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 👨‍💻 Author
+### Adarsh Gaunkar
+Developed as a final year academic project to modernize civic infrastructure management.
